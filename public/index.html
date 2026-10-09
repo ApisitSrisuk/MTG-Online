@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MTG Online</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <section id="lobby">
+    <form id="lobbyForm" class="lobby-box">
+      <div class="brand big">MTG <span>Online</span></div>
+      <p class="sub">โต๊ะ Magic: The Gathering สำหรับเล่นกับเพื่อน</p>
+      <label>ชื่อผู้เล่น <input id="nameInput" maxlength="24" required autocomplete="nickname"></label>
+      <label>รหัสห้อง <input id="roomInput" maxlength="8" placeholder="เว้นว่างไว้เพื่อสร้างห้องใหม่"></label>
+      <button type="submit" class="primary">เข้าห้อง</button>
+      <p id="lobbyError" class="error"></p>
+    </form>
+  </section>
+
+  <section id="game" hidden>
+    <header id="topbar">
+      <div class="brand">MTG <span>Online</span></div>
+      <button id="copyLink" class="room-chip" title="คัดลอกลิงก์เชิญเพื่อน">ห้อง <b id="roomCode"></b> 🔗</button>
+      <div id="turnBar"></div>
+      <div class="top-right">
+        <button id="helpBtn" title="วิธีเล่น">❔ วิธีเล่น</button>
+        <button id="toolsBtn">⚙ เครื่องมือ ▾</button>
+      </div>
+    </header>
+
+    <div id="main">
+      <div id="table">
+        <div id="opponents"></div>
+        <div id="me"></div>
+      </div>
+      <aside id="side">
+        <div id="preview"><p class="hint">ชี้เมาส์ที่การ์ด<br>เพื่อดูรูปใหญ่</p></div>
+        <ol id="log"></ol>
+        <form id="chatForm"><input id="chatInput" maxlength="300" placeholder="💬 พิมพ์แชท แล้วกด Enter"></form>
+      </aside>
+    </div>
+
+    <div id="handBar">
+      <div id="hint"></div>
+      <div id="hand"></div>
+    </div>
+  </section>
+
+  <dialog id="deckDialog">
+    <form id="deckForm" method="dialog">
+      <h2>📋 โหลดเด็ค</h2>
+      <p class="sub">เลือกเด็คแนะนำ หรือวาง decklist จาก MTG Arena / Moxfield / Archidekt (แบบ <code>4 Lightning Bolt</code>)</p>
+      <div id="presetGrid"></div>
+      <textarea id="deckText" rows="12" spellcheck="false" placeholder="Deck&#10;20 Mountain&#10;4 Lightning Bolt&#10;…"></textarea>
+      <p id="deckStatus" class="sub"></p>
+      <div class="row">
+        <span class="grow"></span>
+        <button type="button" id="deckCancel">ปิด</button>
+        <button type="submit" id="deckSubmit" class="primary">โหลดเด็ค</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="askDialog">
+    <form id="askForm" method="dialog">
+      <h2 id="askTitle"></h2>
+      <p id="askText" class="sub"></p>
+      <div id="askBody"></div>
+      <div id="askButtons" class="row"></div>
+    </form>
+  </dialog>
+
+  <dialog id="helpDialog">
+    <h2>❔ วิธีเล่น</h2>
+    <ol class="help">
+      <li><b>เริ่มเกม:</b> ทั้งสองคนโหลดเด็ค แล้วกด <b>🎲 สุ่มคนเริ่มเกม</b></li>
+      <li><b>ลง Land:</b> ดับเบิลคลิก Land ในมือ (เทิร์นละ 1 ใบ)</li>
+      <li><b>เอามานา:</b> ดับเบิลคลิก Land บนสนามเพื่อ tap มานาจะเข้า pool (หายเมื่อเปลี่ยนขั้น)</li>
+      <li><b>ร่ายการ์ด:</b> การ์ดที่ <span class="glow-demo">เรืองแสง</span> คือเล่นได้ตอนนี้ ดับเบิลคลิกหรือลากลงสนาม</li>
+      <li><b>โจมตี:</b> ไปขั้น Combat ดับเบิลคลิก creature เพื่อ tap แล้วกด <b>−</b> ที่ Life ของคู่แข่งตาม damage</li>
+      <li><b>จบเทิร์น:</b> กด <b>ขั้นต่อไป ➜</b> จนถึง End แล้วกดอีกครั้ง อีกฝ่ายจะ untap และจั่วอัตโนมัติ</li>
+    </ol>
+    <h3>ทางลัด</h3>
+    <ul class="help">
+      <li><b>คลิกขวา</b> การ์ด = เมนูทั้งหมด (counter, คว่ำ, ย้ายไปสุสาน…)</li>
+      <li><b>คลิกขวา</b> กอง Library = Scry, ค้นหา, Mill, Mulligan</li>
+      <li>คีย์ลัด: <kbd>N</kbd> ขั้นต่อไป · <kbd>D</kbd> จั่ว · <kbd>U</kbd> untap ทั้งหมด</li>
+      <li>ถ้าระบบเตือนว่าผิดกติกา แต่การ์ดบอกว่าทำได้ ให้กด <b>ข้ามกติกา</b> (คู่แข่งจะเห็นใน log)</li>
+    </ul>
+    <div class="row"><span class="grow"></span><button class="primary" onclick="this.closest('dialog').close()">เข้าใจแล้ว</button></div>
+  </dialog>
+
+  <dialog id="zoneDialog">
+    <div class="zone-head">
+      <h2 id="zoneTitle"></h2>
+      <button id="zoneClose" title="ปิด">✕</button>
+    </div>
+    <p id="zoneHint" class="sub"></p>
+    <div id="zoneCards"></div>
+  </dialog>
+
+  <div id="menu" hidden></div>
+  <div id="toast" hidden></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="rules.js"></script>
+  <script src="decks.js"></script>
+  <script src="thai.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
