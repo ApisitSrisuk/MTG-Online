@@ -78,10 +78,11 @@ test('casting spends mana already in the pool; spells go to the graveyard', () =
 
   act({ type: 'tap', iid: alice.zones.battlefield[0].iid });
   assert.equal(alice.pool.R, 1);
-  act({ type: 'cast', iid: hand('Lava Spike').iid });
+  act({ type: 'cast', iid: hand('Lava Spike').iid, target: { type: 'player', pid: 'bob-000002' } });
   assert.equal(alice.pool.R, 0);
   assert.equal(alice.zones.graveyard[0].name, 'Lava Spike');
-  assert.match(room.log.at(-1).text, /ร่าย Lava Spike จ่าย \{R\}/);
+  assert.ok(room.log.some((l) => /ร่าย Lava Spike จ่าย \{R\}/.test(l.text)));
+  assert.equal(room.players.get('bob-000002').life, 17);
 });
 
 test('mana empties when the phase changes', () => {
@@ -98,10 +99,10 @@ test('sorcery-speed cards need your own main phase; instants do not', () => {
   act({ type: 'phase', phase: 'combat' });
   act({ type: 'tap', iid: alice.zones.battlefield[0].iid });
   assert.throws(() => act({ type: 'cast', iid: hand('Goblin Guide').iid }), /Main 1 \/ Main 2/);
-  act({ type: 'cast', iid: hand('Lightning Bolt').iid });
+  act({ type: 'cast', iid: hand('Lightning Bolt').iid, target: { type: 'player', pid: 'bob-000002' } });
 
   room.turn.active = 'bob-000002';
-  assert.throws(() => act({ type: 'cast', iid: hand('Lava Spike').iid, }), /เฉพาะในเทิร์นของคุณ/);
+  assert.throws(() => act({ type: 'cast', iid: hand('Lava Spike').iid, target: { type: 'player', pid: 'bob-000002' } }), /เฉพาะในเทิร์นของคุณ/);
 });
 
 test('reaching 0 life is announced', () => {

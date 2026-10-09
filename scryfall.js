@@ -63,6 +63,9 @@ function parseDecklist(text) {
   return entries;
 }
 
+// "3" -> 3, "*" or "1+*" -> 0 (variable stats are tracked by hand), missing -> null
+const toStat = (v) => (v == null ? null : Number.parseInt(v, 10) || 0);
+
 function summarize(card) {
   const faces = card.card_faces || [];
   const front = card.image_uris || faces[0]?.image_uris;
@@ -78,6 +81,9 @@ function summarize(card) {
     manaCost: main.mana_cost ?? card.mana_cost ?? '',
     producedMana: (card.produced_mana || []).filter((m) => 'WUBRGC'.includes(m)),
     keywords: card.keywords || [],
+    cmc: card.cmc ?? 0,
+    power: toStat(main.power ?? card.power),
+    toughness: toStat(main.toughness ?? card.toughness),
     oracleText: faces.length
       ? faces.map((f) => `${f.name}: ${f.oracle_text || ''}`).join('\n\n')
       : card.oracle_text || '',

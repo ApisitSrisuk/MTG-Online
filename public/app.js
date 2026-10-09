@@ -17,7 +17,9 @@ const TOKENS = [
 let state = null;
 let joined = null; // { roomId, name } once in a room
 let zoneView = null; // { pid, zone, n?, cards? }
-let drag = null; // { iid, from, dx, dy }
+let drag = null; // { iid, from, dx, dy, card }
+let targeting = null; // { card, extra } while the player picks a target for a spell
+let blockerSel = null; // iid of my creature chosen to block, waiting for an attacker click
 
 const store = {
   get(key) { try { return localStorage.getItem(key); } catch { return null; } },
@@ -179,6 +181,8 @@ socket.on('state', (s) => {
 
 function canPlay(c, p) {
   if (!state.turn || !c.typeLine) return false;
+  if (state.stack.length && (RULES.isLand(c) || !RULES.isInstantSpeed(c))) return false;
+  if (c.targetSpec && !c.targetOptional && !targetCandidates(c.targetSpec).length) return false;
   try {
     RULES.checkTiming(c, state.you, state.turn);
     if (RULES.isLand(c)) return p.landsPlayed < 1;
@@ -191,12 +195,148 @@ function canPlay(c, p) {
   }
 }
 
+// ---------- targeting ----------
+
+// Everything a spell with this target spec could point at (the server re-checks).
+function targetCandidates(spec) {
+  const out = [];
+  for (const p of state.players) {
+    const mine = p.id === state.you;
+    if (spec === 'any' || spec === 'player' || (spec === 'opponent' && !mine)) out.push({ type: 'player', pid: p.id });
+    for (const c of p.battlefield) {
+      if (!c.stats || c.faceDown) continue;
+      if (spec === 'any' || spec === 'creature' || (spec === 'oppCreature' && !mine) || (spec === 'myCreature' && mine)) {
+        out.push({ type: 'card', pid: p.id, iid: c.iid });
+      }
+    }
+  }
+  if (spec === 'spell') for (const s of state.stack) out.push({ type: 'spell', sid: s.sid });
+  return out;
+}
+
+const TARGET_LABEL = {
+  any: 'ผู้เล่นหรือ creature', player: 'ผู้เล่น', opponent: 'คู่แข่ง', creature: 'creature',
+  oppCreature: 'creature ของคู่แข่ง', myCreature: 'creature ของคุณ', spell: 'สเปลบน stack',
+};
+
+// Casting from hand: spells that need a target first switch the table into "pick a target" mode.
+function startCast(c, extra = {}) {
+  closeMenu();
+  if (!c.targetSpec) return act('cast', { iid: c.iid, ...extra });
+  if (!targetCandidates(c.targetSpec).length) {
+    if (c.targetOptional) return act('cast', { iid: c.iid, ...extra });
+    toast(`ตอนนี้ไม่มี${TARGET_LABEL[c.targetSpec]}ให้ ${c.name} เลือกเป็นเป้าหมาย`);
+    return null;
+  }
+  targeting = { card: c, extra };
+  render();
+  return null;
+}
+
+function cancelTargeting() {
+  targeting = null;
+  render();
+}
+
+function markTargets() {
+  const keys = new Set(targeting ? targetCandidates(targeting.card.targetSpec).map((t) => JSON.stringify(t)) : []);
+  document.body.classList.toggle('targeting', Boolean(targeting));
+  for (const el of document.querySelectorAll('[data-tgt]')) el.classList.toggle('targetable', keys.has(el.dataset.tgt));
+}
+
+document.addEventListener('click', (e) => {
+  if (!targeting) return;
+  const el = e.target.closest('[data-tgt].targetable');
+  if (!el) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const { card, extra } = targeting;
+  targeting = null;
+  act('cast', { iid: card.iid, target: JSON.parse(el.dataset.tgt), ...extra }).then(render);
+}, true);
+
+// ---------- combat ----------
+
+const isCreatureCard = (c) => Boolean(c.stats);
+const attackersOnTable = () => state.players.some((p) => p.battlefield.some((c) => c.attacking));
+const myCombat = () => myTurn() && state.turn?.phase === 'combat';
+const defending = () => !myTurn() && state.turn?.phase === 'combat' && attackersOnTable();
+
+function onBattlefieldClick(c, mine) {
+  if (!defending()) return false;
+  if (mine && isCreatureCard(c)) {
+    if (c.blocking) {
+      act('block', { iid: c.iid });
+    } else {
+      blockerSel = blockerSel === c.iid ? null : c.iid;
+      render();
+    }
+    return true;
+  }
+  if (!mine && c.attacking && blockerSel) {
+    const iid = blockerSel;
+    blockerSel = null;
+    act('block', { iid, attacker: c.iid });
+    return true;
+  }
+  return false;
+}
+
+// ---------- stack and choices ----------
+
+function renderStack() {
+  const panel = $('#stackPanel');
+  if (!state.stack.length) {
+    panel.hidden = true;
+    return;
+  }
+  const top = state.stack.at(-1);
+  const name = (pid) => state.players.find((p) => p.id === pid)?.name ?? '?';
+  const iRespond = top.responder === state.you;
+  panel.hidden = false;
+  panel.replaceChildren(
+    h('div', { class: 'stack-title' }, '📜 Stack (บนสุดทำงานก่อน)'),
+    ...[...state.stack].reverse().map((s) => h('div', {
+      class: 'stack-item',
+      'data-tgt': JSON.stringify({ type: 'spell', sid: s.sid }),
+      onmouseenter: () => showPreview(s.card),
+    }, s.card.img ? h('img', { src: s.card.img, alt: '' }) : null,
+    h('div', {}, h('b', {}, s.card.name), h('small', {}, `${name(s.pid)} ร่าย${s.targetText ? ` → ${s.targetText}` : ''}`)))),
+    iRespond
+      ? h('div', { class: 'stack-actions' },
+        h('span', {}, 'ตอบโต้ด้วย Instant ที่เรืองแสง หรือ'),
+        h('button', { class: 'primary', onclick: () => act('pass') }, '✓ ปล่อยผ่าน'))
+      : h('div', { class: 'stack-actions muted' }, `⏳ รอ ${name(top.responder)} ตอบโต้…`),
+  );
+}
+
+function renderChoice() {
+  const dlg = $('#choiceDialog');
+  const choice = state.choice;
+  if (!choice?.cards) {
+    if (dlg.open) dlg.close();
+    return;
+  }
+  $('#choiceTitle').textContent = choice.title;
+  $('#choiceCards').replaceChildren(...choice.cards.map((c) => {
+    const ok = choice.options.includes(c.iid);
+    const el = h('div', { class: `card${ok ? ' choosable' : ' disabled'}`, title: ok ? 'คลิกเพื่อเลือก' : 'เลือกใบนี้ไม่ได้' },
+      c.img ? h('img', { src: faceImage(c), alt: c.name }) : h('div', { class: 'token-face' }, h('b', {}, c.name)));
+    el.addEventListener('mouseenter', () => showPreview(c));
+    if (ok) el.addEventListener('click', () => act('choose', { iid: c.iid }));
+    return el;
+  }));
+  if (!dlg.open) dlg.showModal();
+}
+
 // ---------- rendering ----------
 
 function render() {
   const mine = me();
   if (!mine) return;
   $('#roomCode').textContent = state.roomId;
+  if (targeting && !mine.hand.some((c) => c.iid === targeting.card.iid)) targeting = null;
+  if (!defending()) blockerSel = null;
 
   const opponents = state.players.filter((p) => p.id !== state.you);
   $('#opponents').replaceChildren(
@@ -213,8 +353,11 @@ function render() {
   }));
   renderTurnBar();
   renderHint(mine);
+  renderStack();
+  renderChoice();
   renderLog();
   if (zoneView) refreshZoneView();
+  markTargets();
 }
 
 function nextStep() {
@@ -253,7 +396,33 @@ function renderTurnBar() {
 
 function renderHint(mine) {
   const { turn } = state;
+  if (targeting) {
+    const { card } = targeting;
+    $('#hint').replaceChildren(...[h('span', { class: 'targeting-hint' }, `🎯 เลือก${TARGET_LABEL[card.targetSpec]}เป็นเป้าหมายของ ${card.name} (คลิกที่สิ่งที่กระพริบ)`),
+      card.targetOptional && h('button', {
+        class: 'tiny',
+        onclick: () => {
+          const { extra } = targeting;
+          targeting = null;
+          act('cast', { iid: card.iid, ...extra });
+        },
+      }, 'ไม่เลือกเป้าหมาย'),
+      h('button', { class: 'tiny', onclick: cancelTargeting }, 'ยกเลิก (Esc)')].filter(Boolean));
+    return;
+  }
   let text;
+  const name = (pid) => state.players.find((p) => p.id === pid)?.name;
+  if (state.choice?.waitingFor) text = `⏳ รอ ${state.choice.waitingFor} เลือกการ์ด…`;
+  else if (state.stack.length) text = state.stack.at(-1).responder === state.you
+    ? '📜 มีสเปลรออยู่บน stack: ตอบโต้ด้วย Instant ที่เรืองแสง หรือกด "ปล่อยผ่าน"'
+    : `📜 รอ ${name(state.stack.at(-1).responder)} ตอบโต้สเปลของคุณ…`;
+  else if (defending()) text = blockerSel
+    ? '🛡 คลิก creature ของคู่แข่งที่กำลังโจมตี เพื่อบล็อก'
+    : '🛡 คู่แข่งโจมตี! คลิก creature ของคุณ แล้วคลิกตัวที่โจมตีเพื่อบล็อก (ไม่บล็อกก็ได้)';
+  if (text) {
+    $('#hint').replaceChildren(h('span', {}, text));
+    return;
+  }
   if (!mine.hasDeck) text = '📋 เริ่มจากโหลดเด็ค: กด ⚙ เครื่องมือ → โหลดเด็ค';
   else if (state.players.length < 2) text = '🔗 กดปุ่ม "ห้อง" ด้านบนเพื่อคัดลอกลิงก์ส่งให้เพื่อน';
   else if (!turn) text = '🎲 ทั้งสองฝั่งพร้อมแล้ว กด "สุ่มคนเริ่มเกม" ด้านบน';
@@ -266,7 +435,9 @@ function renderHint(mine) {
       upkeep: '☀️ Upkeep: ถ้าไม่มีความสามารถช่วงต้นเทิร์น กด ขั้นต่อไป ➜ เพื่อเข้า Main 1',
       draw: '☀️ จั่วให้แล้ว กด ขั้นต่อไป ➜',
       main1: `🃏 Main 1: ${mine.landsPlayed ? 'ลง Land ไปแล้ว' : 'ลง Land ได้ 1 ใบ'} · ดับเบิลคลิกการ์ดที่เรืองแสงเพื่อร่าย (ระบบ tap land ให้อัตโนมัติ)`,
-      combat: '⚔️ Combat: ดับเบิลคลิก creature เพื่อ tap โจมตี แล้วกด − ที่ Life คู่แข่งตาม damage',
+      combat: attackersOnTable()
+        ? '⚔️ รอคู่แข่งเลือกบล็อก แล้วกด ขั้นต่อไป ➜ ระบบจะคิด damage ให้อัตโนมัติ'
+        : '⚔️ Combat: ดับเบิลคลิก creature เพื่อประกาศโจมตี (ไม่โจมตีก็กด ขั้นต่อไป ➜)',
       main2: `🃏 Main 2: ร่ายต่อได้ ${mine.landsPlayed ? '' : '· ยังลง Land ได้ 1 ใบ '}· เสร็จแล้วกด ขั้นต่อไป ➜`,
       end: '🌙 End: กด จบเทิร์น ➜ เพื่อส่งตาให้คู่แข่ง (เขาจะ untap และจั่วอัตโนมัติ)',
     }[turn.phase];
@@ -276,7 +447,7 @@ function renderHint(mine) {
 
 function lifeEl(p, mine) {
   const change = (d) => act('life', { delta: d, target: p.id });
-  return h('div', { class: 'life' },
+  return h('div', { class: 'life', 'data-tgt': JSON.stringify({ type: 'player', pid: p.id }) },
     h('button', { title: mine ? 'เสีย 1 Life' : 'ทำ 1 damage', onclick: () => change(-1) }, '−'),
     h('b', { title: 'Life' }, p.life),
     h('button', { title: 'ได้ 1 Life', onclick: () => change(1) }, '+'),
@@ -344,6 +515,8 @@ function playerEl(p, mine) {
   return h('div', { class: `player${mine ? ' mine' : ''}${active ? ' active' : ''}` }, strip, battlefield);
 }
 
+const ownerOf = (c) => state.players.find((p) => p.battlefield.some((x) => x.iid === c.iid))?.id;
+
 function tapCard(c, e) {
   const colors = c.producedMana || [];
   if (!c.tapped && colors.length > 1) {
@@ -371,6 +544,22 @@ function cardEl(c, zone, mine) {
     // The opponent sits across the table, so their side is rotated 180°.
     el.style[mine ? 'left' : 'right'] = `${c.x}%`;
     el.style[mine ? 'top' : 'bottom'] = `${c.y}%`;
+    if (c.stats) {
+      el.dataset.tgt = JSON.stringify({ type: 'card', pid: ownerOf(c), iid: c.iid });
+      const { power, toughness } = c.stats;
+      const changed = power !== c.power || toughness !== c.toughness;
+      el.append(h('span', { class: `pt${changed ? (power + toughness > (c.power ?? 0) + (c.toughness ?? 0) ? ' up' : ' down') : ''}` }, `${power}/${toughness}`));
+      if (c.damage > 0) el.append(h('span', { class: 'dmg', title: 'damage ที่โดนในเทิร์นนี้' }, `💥${c.damage}`));
+      const sick = c.enteredTurn === state.turn?.number && !c.stats.keywords.includes('Haste');
+      if (sick && state.turn?.active === ownerOf(c)) el.append(h('span', { class: 'sick', title: 'เพิ่งลงสนาม โจมตีไม่ได้เทิร์นนี้' }, '💤'));
+    }
+    if (c.attacking) el.classList.add('attacking');
+    if (c.blocking) el.classList.add('blocking');
+    if (blockerSel === c.iid) el.classList.add('selected');
+    el.addEventListener('click', (e) => {
+      if (targeting) return;
+      if (onBattlefieldClick(c, mine)) e.stopPropagation();
+    });
   }
   if (!hidden) el.addEventListener('mouseenter', () => showPreview(c));
 
@@ -378,15 +567,16 @@ function cardEl(c, zone, mine) {
     el.draggable = true;
     el.addEventListener('dragstart', (e) => {
       const r = el.getBoundingClientRect();
-      drag = { iid: c.iid, from: zone, dx: e.clientX - r.left, dy: e.clientY - r.top };
+      drag = { iid: c.iid, card: c, from: zone, dx: e.clientX - r.left, dy: e.clientY - r.top };
       e.dataTransfer.setData('text/plain', c.iid);
       e.dataTransfer.effectAllowed = 'move';
       document.body.classList.add('dragging');
     });
     el.addEventListener('dragend', () => { drag = null; document.body.classList.remove('dragging'); });
     el.addEventListener('dblclick', (e) => {
-      if (zone === 'battlefield') tapCard(c, e);
-      else if (zone === 'hand') act('cast', { iid: c.iid });
+      if (zone === 'battlefield' && myCombat() && c.stats) act('attack', { iid: c.iid });
+      else if (zone === 'battlefield') tapCard(c, e);
+      else if (zone === 'hand') startCast(c);
     });
     el.addEventListener('contextmenu', (e) => { e.preventDefault(); openMenu(e, cardMenu(c, zone)); });
   } else if (!hidden) {
@@ -411,7 +601,7 @@ function makeDropZone(el, zone, extra = () => ({})) {
     const d = drag;
     drag = null;
     // Hand -> battlefield is casting the card, which goes through the rule checks.
-    if (zone === 'battlefield' && d.from === 'hand') act('cast', { iid: d.iid, ...extra(e, d) });
+    if (zone === 'battlefield' && d.from === 'hand') startCast(d.card, extra(e, d));
     else act('move', { iid: d.iid, to: zone, ...extra(e, d) });
   });
 }
@@ -423,6 +613,11 @@ function thaiText(c) {
   const typeLine = c.typeLine ? h('div', { class: 'th-type' }, c.manaCost ? manaSymbols(c.manaCost) : '', ' ', c.typeLine) : null;
   if (typeLine) box.append(typeLine);
   if (own) box.append(h('p', { class: 'th-main' }, manaSymbols(own)));
+  if (c.typeLine && !RULES.isLand(c)) {
+    box.append(c.automated
+      ? h('p', { class: 'th-auto' }, '⚡ เอฟเฟคทำงานอัตโนมัติ')
+      : h('p', { class: 'th-manual' }, '📝 ระบบยังไม่รู้จักเอฟเฟคใบนี้ ทำผลตามคำอธิบายเอง (เช่นกด − ที่ Life)'));
+  }
   const kws = (c.keywords || []).filter((k) => KEYWORD_TH[k]);
   if (kws.length) {
     box.append(h('dl', { class: 'th-kw' }, kws.map((k) => [h('dt', {}, k), h('dd', {}, KEYWORD_TH[k])])));
@@ -497,6 +692,7 @@ function cardMenu(c, zone) {
   const move = (to, extra = {}) => () => act('move', { iid, to, ...extra });
   const items = [['📖 คำอธิบายภาษาไทย', () => explain(c)], '-'];
   if (zone === 'battlefield') {
+    if (myCombat() && c.stats) items.push([c.attacking ? '✋ ยกเลิกโจมตี' : '⚔️ โจมตี (ดับเบิลคลิก)', () => act('attack', { iid })]);
     items.push(
       [c.tapped ? '↺ Untap' : '↻ Tap (ดับเบิลคลิก)', () => act('tap', { iid })],
       [c.faceDown ? 'หงายหน้า' : 'คว่ำหน้า', () => act('faceDown', { iid })],
@@ -512,7 +708,7 @@ function cardMenu(c, zone) {
     items.push(['Counter อื่น ๆ…', () => customCounter(iid)]);
   } else if (zone === 'hand') {
     items.push(
-      ['✨ ร่าย / ลงสนาม (ดับเบิลคลิก)', () => act('cast', { iid })],
+      ['✨ ร่าย / ลงสนาม (ดับเบิลคลิก)', () => startCast(c)],
       ['วางลงสนามโดยไม่ร่าย (จากผลของการ์ด)', move('battlefield')],
       ['วางลงสนามแบบคว่ำหน้า', move('battlefield', { faceDown: true })],
       ['👁 เปิดให้คู่แข่งดู', () => act('reveal', { iid })],
@@ -594,6 +790,7 @@ function closeZone() {
   $('#zoneDialog').close();
 }
 $('#zoneClose').addEventListener('click', closeZone);
+$('#choiceDialog').addEventListener('cancel', (e) => e.preventDefault()); // a choice must be made
 
 // ---------- deck dialog ----------
 
@@ -700,7 +897,7 @@ $('#chatForm').addEventListener('submit', (e) => {
 document.addEventListener('keydown', (e) => {
   if (!joined || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.target.closest('input, textarea') || document.querySelector('dialog[open]:modal')) return;
-  if (e.key === 'Escape') { closeMenu(); return; }
+  if (e.key === 'Escape') { closeMenu(); if (targeting) cancelTargeting(); return; }
   const key = e.key.toLowerCase();
   if (key === 'd') act('draw', { n: 1 });
   else if (key === 'u') act('untapAll');

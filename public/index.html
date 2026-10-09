@@ -35,6 +35,7 @@
       <div id="table">
         <div id="opponents"></div>
         <div id="me"></div>
+        <div id="stackPanel" hidden></div>
       </div>
       <aside id="side">
         <div id="preview"><p class="hint">ชี้เมาส์ที่การ์ด<br>เพื่อดูรูปใหญ่</p></div>
@@ -80,7 +81,9 @@
       <li><b>ลง Land:</b> ดับเบิลคลิก Land ในมือ (เทิร์นละ 1 ใบ)</li>
       <li><b>เอามานา:</b> ดับเบิลคลิก Land บนสนามเพื่อ tap มานาจะเข้า pool (หายเมื่อเปลี่ยนขั้น)</li>
       <li><b>ร่ายการ์ด:</b> การ์ดที่ <span class="glow-demo">เรืองแสง</span> คือเล่นได้ตอนนี้ ดับเบิลคลิกหรือลากลงสนาม</li>
-      <li><b>โจมตี:</b> ไปขั้น Combat ดับเบิลคลิก creature เพื่อ tap แล้วกด <b>−</b> ที่ Life ของคู่แข่งตาม damage</li>
+      <li><b>สเปลที่มีเป้าหมาย</b> (เช่น Lightning Bolt): ร่ายแล้วคลิกเลือกผู้เล่นหรือ creature ที่กระพริบ ระบบลด Life / ฆ่า creature ให้เอง</li>
+      <li><b>โจมตี:</b> ขั้น Combat ดับเบิลคลิก creature เพื่อประกาศโจมตี คู่แข่งคลิก creature ของตัวเองแล้วคลิกตัวที่โจมตีเพื่อบล็อก จากนั้นกด <b>ขั้นต่อไป ➜</b> ระบบคิด damage ให้</li>
+      <li><b>ตอบโต้:</b> เมื่อคู่แข่งร่ายสเปล ถ้าคุณมี Instant ที่ร่ายได้ จะมีแผง Stack ให้ตอบโต้หรือกด <b>ปล่อยผ่าน</b></li>
       <li><b>จบเทิร์น:</b> กด <b>ขั้นต่อไป ➜</b> จนถึง End แล้วกดอีกครั้ง อีกฝ่ายจะ untap และจั่วอัตโนมัติ</li>
     </ol>
     <h3>ทางลัด</h3>
@@ -91,6 +94,12 @@
       <li>ถ้าระบบเตือนว่าผิดกติกา แต่การ์ดบอกว่าทำได้ ให้กด <b>ข้ามกติกา</b> (คู่แข่งจะเห็นใน log)</li>
     </ul>
     <div class="row"><span class="grow"></span><button class="primary" onclick="this.closest('dialog').close()">เข้าใจแล้ว</button></div>
+  </dialog>
+
+  <dialog id="choiceDialog">
+    <h2 id="choiceTitle"></h2>
+    <p class="sub">การ์ดที่สว่างคือเลือกได้ (คลิก 1 ใบ)</p>
+    <div id="choiceCards"></div>
   </dialog>
 
   <dialog id="zoneDialog">
